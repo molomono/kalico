@@ -108,11 +108,44 @@ class TemperatureProbe:
             "max_temperature", 99999999.9, above=self.min_temp
         )
         
-        # Setup physical sensor via heaters system
-        pheaters = self.printer.load_object(config, "heaters")
-        self.sensor = pheaters.setup_sensor(config)
+        # Get sensor type and sensor pin directly from config
+        temp_sensor_type = config.get("temp_sensor_type")
+        sensor_pin = config.get("sensor_pin")
+        
+        # Create sensor using Klipper's heater sensor system
+        # We manually look up and instantiate the sensor class
+        sensors = {
+            "Generic 3950": "thermistor",
+            "Generic 3950 1%": "thermistor",
+            "AD595": "ad595",
+            "AD597": "ad597",
+            "AD8494": "ad8494",
+            "AD8495": "ad8495",
+            "MAX6675": "max6675",
+            "MAX31855": "max31855",
+            "MAX31856": "max31856",
+            "MAX31865": "max31865",
+            "BME280": "bme280",
+        }
+        
+        if temp_sensor_type not in sensors:
+            raise config.error(
+                "Unknown temp_sensor_type '%s'" % (temp_sensor_type,))
+        
+        # Import the sensor module
+        sensor_module_name = sensors[temp_sensor_type]
+        sensor_module = __import__(
+            "klippy.extras." + sensor_module_name, fromlist=[""]
+        )
+        
+        # Create the sensor instance
+        self.sensor = sensor_module.TemperatureSensor(
+            config, sensor_pin)
         self.sensor.setup_minmax(self.min_temp, self.max_temp)
         self.sensor.setup_callback(self._temp_callback)
+        
+        # Register with heaters system
+        pheaters = self.printer.load_object(config, "heaters")
         pheaters.register_sensor(config, self)
         
         # Temperature tracking

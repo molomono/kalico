@@ -2,7 +2,7 @@
 
 [probe_eddy_current_nodrift probe]
 # Temperature sensor
-temp_sensor_type: Generic 3950
+sensor_type: Generic 3950
 sensor_pin: eddy:gpio26
 min_temperature: 0
 max_temperature: 100

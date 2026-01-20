@@ -1,0 +1,16 @@
+# Minimal probe_eddy_current_nodrift configuration
+
+[probe_eddy_current_nodrift probe]
+# Temperature sensor
+sensor_type: Generic 3950
+sensor_pin: eddy:gpio26
+min_temperature: 0
+max_temperature: 100
+
+# Eddy current sensor
+eddy_sensor_type: ldc1612
+i2c_address: 0x2a
+i2c_bus: i2c0f
+
+# Probe offset
+z_offset: 2.5

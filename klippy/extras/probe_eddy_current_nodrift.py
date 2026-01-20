@@ -7,7 +7,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging, math, bisect
 import mcu
-from . import ldc1612, probe, manual_probe
+from . import ldc1612, probe, manual_probe, heaters
 
 OUT_OF_RANGE = 99.9
 KELVIN_TO_CELSIUS = -273.15
@@ -89,14 +89,16 @@ class Polynomial2d:
 
 
 ######################################################################
-# Internal Temperature Sensor with Drift Compensation
+# Temperature Probe - Handles temperature sensor setup and integration
 ######################################################################
 
-class InternalTemperatureSensor:
-    """Internal temperature sensor with smoothing and calibration tracking"""
+class TemperatureProbe:
+    """Temperature sensor with smoothing and calibration tracking"""
     def __init__(self, config):
         self.printer = config.get_printer()
         self.name = config.get_name()
+        
+        # Temperature smoothing
         smooth_time = config.getfloat("smooth_time", 2., above=0.)
         self.inv_smooth_time = 1. / smooth_time
         self.min_temp = config.getfloat(
@@ -105,8 +107,8 @@ class InternalTemperatureSensor:
         self.max_temp = config.getfloat(
             "max_temperature", 99999999.9, above=self.min_temp
         )
-        # Setup physical sensor using standard Klipper sensor configuration
-        # This uses the sensor_type, sensor_pin, etc. from config
+        
+        # Setup physical sensor via heaters system
         pheaters = self.printer.load_object(config, "heaters")
         self.sensor = pheaters.setup_sensor(config)
         self.sensor.setup_minmax(self.min_temp, self.max_temp)
@@ -128,16 +130,13 @@ class InternalTemperatureSensor:
         measured_min = min(measured_min, smoothed_temp)
         measured_max = max(measured_max, smoothed_temp)
         self.last_measurement = (smoothed_temp, measured_min, measured_max)
-        # Notify any registered callbacks
         for callback in self._callbacks:
             callback(smoothed_temp)
 
     def register_callback(self, callback):
-        """Register a callback to be called when temperature updates"""
         self._callbacks.append(callback)
 
     def get_temp(self, eventtime=None):
-        """Return current smoothed temperature"""
         return self.last_measurement[0]
 
     def get_status(self, eventtime=None):
@@ -149,7 +148,8 @@ class InternalTemperatureSensor:
         }
 
     def stats(self, eventtime):
-        return False, 'temp_sensor: temp=%.1f' % (self.last_measurement[0])
+        return False, 'temp_probe: temp=%.1f' % (self.last_measurement[0])
+
 
 
 ######################################################################
@@ -158,9 +158,9 @@ class InternalTemperatureSensor:
 
 class DriftCompensationEngine:
     """Handles temperature-based frequency drift compensation"""
-    def __init__(self, config, temp_sensor):
+    def __init__(self, config, temp_probe):
         self.printer = config.get_printer()
-        self.temp_sensor = temp_sensor
+        self.temp_sensor = temp_probe
         self.name = config.get_name()
         
         # Calibration temperature at time of z-offset calibration
@@ -987,13 +987,13 @@ class PrinterEddyProbeNoDrift:
     def __init__(self, config):
         self.printer = config.get_printer()
         
-        # Setup internal temperature sensor with drift compensation
-        # Temperature sensor uses: sensor_type, sensor_pin, min_temperature, 
+        # Setup internal temperature probe with drift compensation
+        # Temperature probe uses: sensor_type, sensor_pin, min_temperature, 
         # max_temperature, smooth_time, horizontal_move_z
-        self.temp_sensor = InternalTemperatureSensor(config)
+        self.temp_probe = TemperatureProbe(config)
         
         # Setup drift compensation engine
-        self.drift_comp = DriftCompensationEngine(config, self.temp_sensor)
+        self.drift_comp = DriftCompensationEngine(config, self.temp_probe)
         
         # Setup eddy current calibration
         self.calibration = EddyCalibration(config, self.drift_comp)
@@ -1031,7 +1031,7 @@ class PrinterEddyProbeNoDrift:
     def get_status(self, eventtime):
         status = self.cmd_helper.get_status(eventtime)
         # Add temperature and drift compensation info
-        temp_status = self.temp_sensor.get_status(eventtime)
+        temp_status = self.temp_probe.get_status(eventtime)
         status.update({
             "temperature": temp_status["temperature"],
             "measured_min_temp": temp_status["measured_min_temp"],

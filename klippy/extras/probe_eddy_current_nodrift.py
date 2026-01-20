@@ -96,15 +96,17 @@ class InternalTemperatureSensor:
     """Internal temperature sensor with smoothing and calibration tracking"""
     def __init__(self, config):
         self.printer = config.get_printer()
+        self.name = config.get_name()
         smooth_time = config.getfloat("smooth_time", 2., above=0.)
         self.inv_smooth_time = 1. / smooth_time
         self.min_temp = config.getfloat(
-            "min_temp", KELVIN_TO_CELSIUS, minval=KELVIN_TO_CELSIUS
+            "min_temperature", KELVIN_TO_CELSIUS, minval=KELVIN_TO_CELSIUS
         )
         self.max_temp = config.getfloat(
-            "max_temp", 99999999.9, above=self.min_temp
+            "max_temperature", 99999999.9, above=self.min_temp
         )
-        # Setup physical sensor
+        # Setup physical sensor using standard Klipper sensor configuration
+        # This uses the sensor_type, sensor_pin, etc. from config
         pheaters = self.printer.load_object(config, "heaters")
         self.sensor = pheaters.setup_sensor(config)
         self.sensor.setup_minmax(self.min_temp, self.max_temp)
@@ -986,6 +988,8 @@ class PrinterEddyProbeNoDrift:
         self.printer = config.get_printer()
         
         # Setup internal temperature sensor with drift compensation
+        # Temperature sensor uses: sensor_type, sensor_pin, min_temperature, 
+        # max_temperature, smooth_time, horizontal_move_z
         self.temp_sensor = InternalTemperatureSensor(config)
         
         # Setup drift compensation engine
@@ -994,10 +998,11 @@ class PrinterEddyProbeNoDrift:
         # Setup eddy current calibration
         self.calibration = EddyCalibration(config, self.drift_comp)
         
-        # Sensor type
-        sensors = { "ldc1612": ldc1612.LDC1612 }
-        sensor_type = config.getchoice('sensor_type', {s: s for s in sensors})
-        self.sensor_helper = sensors[sensor_type](config, self.calibration)
+        # Setup eddy current sensor (separate from temperature sensor)
+        # Eddy sensor uses: eddy_sensor_type, i2c_address, i2c_bus, etc.
+        eddy_sensors = { "ldc1612": ldc1612.LDC1612 }
+        eddy_sensor_type = config.getchoice('eddy_sensor_type', {s: s for s in eddy_sensors})
+        self.sensor_helper = eddy_sensors[eddy_sensor_type](config, self.calibration)
         
         # Probe interface
         self.param_helper = probe.ProbeParameterHelper(config)

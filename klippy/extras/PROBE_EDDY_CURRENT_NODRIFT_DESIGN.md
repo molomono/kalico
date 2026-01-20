@@ -51,23 +51,63 @@
 - Manages GCode command registration
 - Handles status reporting
 
+
+
+## Parameter Separation
+
+To avoid configuration conflicts, the probe uses separate configuration parameters for the temperature sensor and eddy current sensor:
+
+### Temperature Sensor Parameters
+These use standard Klipper sensor configuration:
+- `sensor_type`: Temperature sensor type (Generic 3950, MAX31865, AD595, PT100, etc.)
+- `sensor_pin`: GPIO pin for sensor connection
+- `min_temperature`: Minimum safe operating temperature
+- `max_temperature`: Maximum safe operating temperature
+- `smooth_time`: Temperature reading smoothing time constant
+- `horizontal_move_z`: Z height for horizontal moves during calibration
+
+### Eddy Current Sensor Parameters
+These are specific to the eddy current probe:
+- `eddy_sensor_type`: Eddy sensor type (currently "ldc1612")
+- `i2c_address`: I2C address of the sensor (typically 0x2a)
+- `i2c_bus`: I2C bus identifier (e.g., "i2c0a")
+- `x_offset`: X offset from nozzle to sensor
+- `y_offset`: Y offset from nozzle to sensor
+- `z_offset`: Z offset from nozzle to sensor
+
+### Shared Parameters
+Some parameters apply to the overall probe behavior:
+- `calibration_temp`: Temperature at which Z calibration was performed
+- `drift_calibration`: Polynomial coefficients for drift compensation
+- `calibrate`: Frequency-to-height mapping from Z calibration
+
 ## Configuration
 
-The probe is configured as a `probe_eddy_current_nodrift` section in `printer.cfg`:
+The probe is configured as a `probe_eddy_current_nodrift` section in `printer.cfg`. Two separate `sensor_type` configurations are used:
+- **Temperature sensor**: `sensor_type` (e.g., "MAX31865", "AD595", "Generic 3950")
+- **Eddy current sensor**: `eddy_sensor_type` (e.g., "ldc1612")
 
 ```ini
 [probe_eddy_current_nodrift probe_name]
-sensor_type: ldc1612
+# Temperature sensor configuration (standard Klipper sensor setup)
+sensor_type: Generic 3950
+sensor_pin: PA0
+min_temperature: 0
+max_temperature: 350
+smooth_time: 2.0
+horizontal_move_z: 2.0
+
+# Eddy current sensor configuration
+eddy_sensor_type: ldc1612
 i2c_address: 0x2a
 i2c_bus: i2c0a
+
+# Probe offset configuration
+x_offset: 0.0
+y_offset: 0.0
 z_offset: 0.0
 
-# Temperature sensor configuration
-min_temp: -273.15
-max_temp: 350.0
-smooth_time: 2.0
-
-# Calibration settings
+# Calibration settings (auto-generated)
 calibrate: 0.0:100000.0, 1.0:95000.0, ...
 
 # Drift compensation calibration (auto-generated during calibration)
@@ -220,7 +260,9 @@ Possible enhancements:
 ### Minimal Configuration
 ```ini
 [probe_eddy_current_nodrift my_probe]
-sensor_type: ldc1612
+sensor_type: Generic 3950
+sensor_pin: PA0
+eddy_sensor_type: ldc1612
 i2c_address: 0x2a
 z_offset: 2.5
 ```
@@ -228,17 +270,24 @@ z_offset: 2.5
 ### Full Configuration with Drift Compensation
 ```ini
 [probe_eddy_current_nodrift my_probe]
-sensor_type: ldc1612
-i2c_address: 0x2a
-i2c_bus: i2c0a
-z_offset: 2.5
-speed: 10.0
+# Temperature sensor setup (standard Klipper parameters)
+sensor_type: MAX31865
+sensor_pin: PA0
+sensor_type: MAX31865  # PT100 RTD sensor
+min_temperature: 0
+max_temperature: 100
+smooth_time: 2.0
 horizontal_move_z: 2.0
 
-# Temperature sensor setup
-min_temp: 0
-max_temp: 100
-smooth_time: 2.0
+# Eddy current sensor setup
+eddy_sensor_type: ldc1612
+i2c_address: 0x2a
+i2c_bus: i2c0a
+
+# Probe offset configuration
+x_offset: 0.0
+y_offset: 0.0
+z_offset: 2.5
 
 # Calibration data (auto-generated)
 calibrate: 0.0:100000.0, 1.0:95000.0, 2.0:90000.0

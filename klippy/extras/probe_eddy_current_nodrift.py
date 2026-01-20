@@ -7,7 +7,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging, math, bisect
 import mcu
-from . import ldc1612, probe, manual_probe, heaters
+from . import ldc1612, probe, manual_probe, heaters, bus
 
 OUT_OF_RANGE = 99.9
 KELVIN_TO_CELSIUS = -273.15
@@ -88,12 +88,14 @@ class Polynomial2d:
         return cls(a0, a1, a2)
 
 
+
+
 ######################################################################
-# Temperature Probe - Handles temperature sensor setup and integration
+# Temperature Probe Module - Standalone temperature sensing
 ######################################################################
 
-class TemperatureProbe:
-    """Temperature sensor with smoothing and calibration tracking"""
+class TemperatureProbeModule:
+    """Standalone temperature probe with optional drift compensation"""
     def __init__(self, config):
         self.printer = config.get_printer()
         self.name = config.get_name()
@@ -118,7 +120,9 @@ class TemperatureProbe:
         # Temperature tracking
         self.last_temp_read_time = 0.
         self.last_measurement = (0., 99999999., 0.,)
-        self._callbacks = []
+        
+        # Drift compensation (will be set if used by linked eddy probe)
+        self.drift_comp = None
 
     def _temp_callback(self, read_time, temp):
         smoothed_temp, measured_min, measured_max = self.last_measurement
@@ -130,11 +134,6 @@ class TemperatureProbe:
         measured_min = min(measured_min, smoothed_temp)
         measured_max = max(measured_max, smoothed_temp)
         self.last_measurement = (smoothed_temp, measured_min, measured_max)
-        for callback in self._callbacks:
-            callback(smoothed_temp)
-
-    def register_callback(self, callback):
-        self._callbacks.append(callback)
 
     def get_temp(self, eventtime=None):
         return self.last_measurement[0]
@@ -148,7 +147,8 @@ class TemperatureProbe:
         }
 
     def stats(self, eventtime):
-        return False, 'temp_probe: temp=%.1f' % (self.last_measurement[0])
+        return False, '%s: temp=%.1f' % (self.name, self.last_measurement[0])
+
 
 
 
@@ -980,28 +980,36 @@ class EddyScanningProbe:
 
 
 ######################################################################
-# Main Printer Object - Standalone Eddy Current Probe with Drift Compensation
+# Main Printer Objects - Separate temperature_probe and eddy probe modules
 ######################################################################
 
 class PrinterEddyProbeNoDrift:
+    """Eddy current probe with optional temperature-based drift compensation"""
     def __init__(self, config):
         self.printer = config.get_printer()
         
-        # Setup internal temperature probe with drift compensation
-        # Temperature probe uses: sensor_type, sensor_pin, min_temperature, 
-        # max_temperature, smooth_time, horizontal_move_z
-        self.temp_probe = TemperatureProbe(config)
-        
-        # Setup drift compensation engine
-        self.drift_comp = DriftCompensationEngine(config, self.temp_probe)
-        
-        # Setup eddy current calibration
-        self.calibration = EddyCalibration(config, self.drift_comp)
-        
-        # Setup eddy current sensor (separate from temperature sensor)
-        # Eddy sensor uses: eddy_sensor_type, i2c_address, i2c_bus, etc.
+        # Eddy current sensor
         eddy_sensors = { "ldc1612": ldc1612.LDC1612 }
         eddy_sensor_type = config.getchoice('eddy_sensor_type', {s: s for s in eddy_sensors})
+        
+        # Calibration
+        self.calibration = None
+        self.sensor_helper = None
+        
+        # Try to link with temperature probe (optional)
+        self.temp_probe = None
+        self.drift_comp = None
+        self._try_link_temperature_probe(config)
+        
+        # Setup calibration with optional drift compensation
+        if config.getboolean("calibrate", False):
+            self.calibration = EddyGatherSamples(config, self.drift_comp)
+        else:
+            calib_fn = config.get("calibration_data", None)
+            if calib_fn:
+                self.calibration = EddyCalibration.from_file(calib_fn, self.drift_comp)
+        
+        # Setup eddy sensor
         self.sensor_helper = eddy_sensors[eddy_sensor_type](config, self.calibration)
         
         # Probe interface
@@ -1019,8 +1027,20 @@ class PrinterEddyProbeNoDrift:
         
         self.printer.add_object('probe', self)
 
+    def _try_link_temperature_probe(self, config):
+        """Attempt to link with a temperature_probe of the same name"""
+        probe_name = config.get_name().split()[-1]  # Extract probe name from "probe_eddy_current_nodrift NAME"
+        try:
+            self.temp_probe = self.printer.lookup_object(f"temperature_probe {probe_name}")
+            if self.temp_probe:
+                self.drift_comp = DriftCompensationEngine(config, self.temp_probe)
+        except:
+            # Temperature probe not found - that's ok, probe will work without it
+            pass
+
     def add_client(self, cb):
-        self.sensor_helper.add_client(cb)
+        if self.sensor_helper:
+            self.sensor_helper.add_client(cb)
 
     def get_probe_params(self, gcmd=None):
         return self.param_helper.get_probe_params(gcmd)
@@ -1030,14 +1050,15 @@ class PrinterEddyProbeNoDrift:
 
     def get_status(self, eventtime):
         status = self.cmd_helper.get_status(eventtime)
-        # Add temperature and drift compensation info
-        temp_status = self.temp_probe.get_status(eventtime)
-        status.update({
-            "temperature": temp_status["temperature"],
-            "measured_min_temp": temp_status["measured_min_temp"],
-            "measured_max_temp": temp_status["measured_max_temp"],
-            "compensation_enabled": self.drift_comp.is_enabled(),
-        })
+        if self.temp_probe:
+            temp_status = self.temp_probe.get_status(eventtime)
+            status.update({
+                "temperature": temp_status.get("temperature"),
+                "measured_min_temp": temp_status.get("measured_min_temp"),
+                "measured_max_temp": temp_status.get("measured_max_temp"),
+            })
+        if self.drift_comp:
+            status["drift_compensation_enabled"] = True
         return status
 
     def start_probe_session(self, gcmd):
@@ -1050,4 +1071,11 @@ class PrinterEddyProbeNoDrift:
 
 
 def load_config_prefix(config):
-    return PrinterEddyProbeNoDrift(config)
+    """Load based on section name: temperature_probe or probe_eddy_current_nodrift"""
+    section = config.get_name().split()[0]
+    if section == "temperature_probe":
+        return TemperatureProbeModule(config)
+    elif section == "probe_eddy_current_nodrift":
+        return PrinterEddyProbeNoDrift(config)
+    else:
+        raise config.error(f"Unknown section type: {section}")

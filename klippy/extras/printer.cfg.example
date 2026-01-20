@@ -1,16 +1,38 @@
-# Minimal probe_eddy_current_nodrift configuration
+# Example configuration for probe_eddy_current_nodrift
+# Two separate sections for temperature probe and eddy current probe
+# They are linked by name and work together when both are configured
 
-[probe_eddy_current_nodrift probe]
-# Temperature sensor
-sensor_type: Generic 3950
-sensor_pin: eddy:gpio26
-min_temperature: 0
-max_temperature: 100
-
-# Eddy current sensor
+# Option 1: Eddy probe WITHOUT temperature-based drift compensation
+[probe_eddy_current_nodrift eddy_probe]
 eddy_sensor_type: ldc1612
 i2c_address: 0x2a
-i2c_bus: i2c0f
+i2c_bus: i2c0a
+x_offset: 0.0
+y_offset: 25.0
+z_offset: 2.0
 
-# Probe offset
-z_offset: 2.5
+# Option 2: With temperature-based drift compensation
+# Uncomment both sections below to enable temperature-based drift correction
+
+#[thermistor Generic 3950]
+#temperature1: 25.0
+#resistance1: 100000.0
+#temperature2: 150.0
+#resistance2: 1641.0
+#temperature3: 250.0
+#resistance3: 226.0
+
+#[temperature_probe eddy_probe]
+#sensor_type: Generic 3950
+#sensor_pin: PF5
+#min_temperature: 0.0
+#max_temperature: 300.0
+#smooth_time: 2.0
+
+#[probe_eddy_current_nodrift eddy_probe]
+#eddy_sensor_type: ldc1612
+#i2c_address: 0x2a
+#i2c_bus: i2c0a
+#x_offset: 0.0
+#y_offset: 25.0
+#z_offset: 2.0
